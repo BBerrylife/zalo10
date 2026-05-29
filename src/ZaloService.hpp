@@ -1,0 +1,176 @@
+#ifndef ZALOSERVICE_HPP
+#define ZALOSERVICE_HPP
+
+#include <QObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QTimer>
+#include <QMap>
+#include <QSet>
+#include <QString>
+#include <QVariant>
+#include <QList>
+#include <QPair>
+#include <QByteArray>
+#include <QSettings>
+#include <QFile>
+
+class ZaloService : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY loggedInChanged)
+
+public:
+    explicit ZaloService(QObject *parent = 0);
+    virtual ~ZaloService();
+
+    bool loggedIn() const { return m_loggedIn; }
+
+    // Các hàm tương tác công khai từ QML Cascades
+    Q_INVOKABLE void startQRLogin();
+    Q_INVOKABLE void retryQRLogin();
+    Q_INVOKABLE void cancelQRLogin();
+    Q_INVOKABLE void logout();
+    Q_INVOKABLE void loginWithCookie(const QString &zpsid, const QString &zpwSek, const QString &imei = "", const QString &ua = "", const QString &token = "");
+    Q_INVOKABLE bool loadSession();
+    Q_INVOKABLE void saveSession();
+
+    Q_INVOKABLE void fetchConversations();
+    Q_INVOKABLE void fetchFriends();
+    Q_INVOKABLE void fetchInvites();
+    Q_INVOKABLE void fetchGroupDetails(const QStringList &groupIds);
+    Q_INVOKABLE void fetchMessages(const QString &threadId, bool isGroup);
+    Q_INVOKABLE void sendMessage(const QString &threadId, const QString &content, bool isGroup);
+    Q_INVOKABLE void downloadAvatar(const QString &threadId, const QString &url);
+
+signals:
+    void loggedInChanged();
+    void loginFailed(const QString &message);
+    void loginSuccess(const QString &uid, const QString &displayName);
+    void qrCodeReady(const QString &imagePath, const QString &qrCode);
+    void qrScanned(const QString &displayName);
+    void qrExpired();
+    void conversationsReady(const QVariantList &threads); // groups
+    void friendsReady(const QVariantList &friends);       // 1-1 friends
+    void invitesReady(const QVariantList &invites);       // friend requests
+    void messagesReady(const QString &threadId, const QVariantList &messages);
+    void messageSent(bool success, const QString &threadId);
+    // threadId, localFilePath (file:///tmp/...)
+    void avatarReady(const QString &threadId, const QString &localPath);
+
+private slots:
+    // Slot xử lý luồng đăng nhập bằng QR Code
+    void onStep1Done();
+    void onStep2Done();
+    void onStep3Done();
+    void onStep4Done();
+    void onStep5Done();
+    void onQRImageFetched();
+    void onStep6Done();
+    void onStep7Done();
+    void onStep8Done();
+    void onStep9Done();
+
+    // Slot xử lý luồng đăng nhập trực tiếp qua Cookie cũ
+    void onCookieStep1Done();
+    void onCookieStep2Done();
+
+    // Slot xử lý dữ liệu tin nhắn và hội thoại
+    void onFetchConvoDone();
+    void onFetchFriendsDone();
+    void onFetchInvitesDone();
+    void onGroupDetailsDone();
+    void onFetchMsgDone();
+    void onSendMsgDone();
+    void onQRExpired();
+    void onListenTimer();
+    void onListenDone();
+    void onAvatarDownloaded();
+
+private:
+    // Cấu trúc đóng gói tham số mã hóa phục vụ API login
+    struct EncryptedParams {
+        QString enc_ver;
+        QString zcid;
+        QString zcid_ext;
+        QString encryptKey;
+        QString encryptedData;
+    };
+
+    // Khởi chạy các bước xử lý nội bộ
+    void step1_loadLoginPage();
+    void step2_getLoginInfo();
+    void step3_verifyClient();
+    void step4_generateQR();
+    void step5_waitingScan();
+    void step6_waitingConfirm();
+    void step7_checkSession();
+    void step8_getZaloLoginInfo();
+    void step9_getServerInfo();
+
+    void cookieStep1_getZaloLoginInfo();
+    void cookieStep2_getServerInfo(const QString &encryptKey);
+
+    // Tiện ích xử lý chuỗi và mạng
+    EncryptedParams buildEncryptedParams(const QVariantMap &data);
+    QString buildSignKey(const QString &type, const QVariantMap &params);
+    QString generateIMEI();
+    QString generateUUIDv4();
+    QString buildRawUrl(const QString &base, const QVariantMap &params);
+    QNetworkRequest buildRequest(const QString &urlStr, const QString &referer, bool jsonAccept = false);
+    QString buildCookieHeader() const;
+    void parseCookiesFromReply(QNetworkReply *reply);
+    QByteArray buildFormBody(const QList<QPair<QString, QString> > &fields);
+
+    // Công cụ mã hóa nội bộ (AES CBC 128 & MD5)
+    QString aesEncryptHex(const QString &keyHex32, const QString &plainText);
+    QString aesEncryptBase64(const QString &keyStr, const QString &plainText);
+    QString aesEncryptBase64_256(const QString &keyStr, const QString &plainText); // AES-256 cho login params
+    QString aesDecryptBase64_256(const QString &keyStr, const QString &cipherB64); // AES-256 cho decrypt response
+    QString aesDecryptBase64(const QString &keyStr, const QString &cipherB64);
+    QString md5Hex(const QString &input);
+    QString md5Hex(const QByteArray &input);
+    QString randomHexString(int len);
+
+    // Quản lý kết nối và định thời
+    QNetworkAccessManager *m_manager;
+    QTimer *m_qrExpireTimer;
+    QTimer *m_listenTimer;
+
+    // Trạng thái phiên làm việc
+    QString m_userAgent;
+    QString m_language;
+    bool m_loggedIn;
+    bool m_qrCancelled;
+
+    // Bộ nhớ lưu trữ tạm thời thông tin tài khoản
+    QMap<QString, QString> m_cookies;
+    QString m_uid;
+    QString m_displayName;
+    QString m_secretKey; // zpw_enk dùng làm khóa mã hóa tin nhắn chat
+    QString m_imei;
+    QString m_loginVersion;
+    QString m_qrCode;
+    QString m_pendingEncryptKey;
+
+    // URL định tuyến các cụm Server phân phối luồng dữ liệu chat của Zalo
+    QString m_chatServiceUrl;
+    QString m_groupServiceUrl;
+    QString m_profileServiceUrl;   // zpwServiceMap.profile[0]
+    QString m_groupPollServiceUrl; // zpwServiceMap.group_poll[0]
+    QString m_externalToken; // Token (zpw_enk) do user cung cấp thủ công, ưu tiên hơn key từ server
+
+    // Cache avatar: url -> localPath (file:///tmp/avatar_<md5>.jpg)
+    QMap<QString, QString> m_avatarCache;
+    QSet<QString> m_pendingAvatars; // Ngăn tải trùng lặp
+    QMap<QString, QSet<QString> > m_pendingAvatarWaiters; // url -> set of threadIds đang chờ
+
+    // Định nghĩa hằng số môi trường Zalo Web
+    static const int API_VERSION = 671; // zca-js su dung 671 (default)
+    static const int API_TYPE = 30;
+    static const char *USER_AGENT;
+    static const char *AES_FIXED_KEY;
+};
+
+#endif // ZALOSERVICE_HPP
